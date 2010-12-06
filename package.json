@@ -1,0 +1,16 @@
+{   "name" : "http_trace",
+    "version" : "0.2.4",
+    "description" : "Live HTTP and WebSocket packet capture and protocol decoding",
+    "author": "Matt Ranney <mjr@ranney.com>",
+    "main": "./http_trace",
+    "repository": {
+        "type": "git",
+        "url": "git://github.com/mranney/http_trace.git"
+    },
+    "dependencies": {
+        "pcap": ">=0.2.4"
+    },
+    "bin": {
+        "http_trace": "./http_trace"
+    }
+}
