@@ -2,8 +2,14 @@
 
 /*global process require exports setInterval console */
 
-var util,
-    node_http = require('http'),
+var util;
+try {
+    util = require("util");
+} catch (err) {
+    util = require("sys");
+}
+
+var node_http = require('http'),
     node_url  = require('url'),
     pcap      = require("pcap"), pcap_session,
     ANSI,
@@ -42,12 +48,6 @@ ANSI = (function () {
         return CSI + formats[format][0] + 'm' + str + CSI + formats[format][1] + 'm';
     };
 }());
-
-try {
-    util = require("util");
-} catch (err) {
-    util = require("sys");
-}
 
 function lpad(num, len) {
     var str = num.toString();
