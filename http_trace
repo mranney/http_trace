@@ -272,6 +272,15 @@ function start_drop_watcher() {
     }, 2000);
 }
 
+function binary_body_check(headers) {
+    var ct = headers["Content-Type"];
+    if (ct && (/^(image|video)/.test(ct))) {
+        return true;
+    } else {
+        return false;
+    }
+}
+
 function setup_listeners() {
     var tcp_tracker = new pcap.TCP_tracker();
 
@@ -341,6 +350,7 @@ function setup_listeners() {
         if (options.headers) {
             console.log(format_headers(http.request.headers));
         }
+        http.request.binary_body = binary_body_check(http.request.headers);
     });
 
     tcp_tracker.on('http request body', function (session, http, data) {
@@ -352,8 +362,8 @@ function setup_listeners() {
             " #" + session.http_request_count + " HTTP " + http.request.http_version + " request body: " + 
             format_size(data.length));
 
-        if (options.bodies) {
-            // TODO - this is not at all what you want for gzipped or binary data
+        if (options.bodies && !http.request.binary_body) {
+            // TODO - this is not at all what you want for gzipped data
             console.log(ANSI(data.toString("utf8"), "green"));
         }
     });
@@ -382,6 +392,7 @@ function setup_listeners() {
         if (options.headers) {
             console.log(format_headers(http.response.headers));
         }
+        http.response.binary_body = binary_body_check(http.response.headers);
     });
 
     tcp_tracker.on('http response body', function (session, http, data) {
@@ -393,7 +404,7 @@ function setup_listeners() {
             " #" + session.http_request_count + " HTTP " + http.response.http_version + " response body: " + 
             format_size(data.length));
 
-        if (options.bodies) {
+        if (options.bodies && !http.response.binary_body) {
             // TODO - this is not at all what you want for gzipped or binary data
             console.log(ANSI(data.toString("utf8"), "green"));
         }
