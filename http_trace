@@ -2,6 +2,11 @@
 
 /*global process require exports setInterval console */
 
+// TODO:
+//    support -n for inhibiting reverse DNS
+//    support --group for grouping events from a full req/res cycle
+//
+
 var util;
 try {
     util = require("util");
@@ -79,7 +84,23 @@ function format_line_start(ts, src, dst) {
 }
 
 function format_headers(headers) {
-    return Object.keys(headers).map(function (val) {
+    var matched = [], keys = Object.keys(headers);
+    
+    if (options.headers) {
+        matched = keys;
+    } else if (Array.isArray(options["show-header"])) {
+        matched = keys.filter(function (key) {
+            return options["show-header"].some(function (filter) {
+                return filter.test(key);
+            });
+        });
+    }
+    
+    if (matched.length === 0) {
+        return;
+    }
+
+    console.log(matched.map(function (val) {
         if (val === "Cookie") {
             var cookie_pairs = headers[val].split("; ").sort();
             return ("    " + ANSI(val, "white") + ": " + ANSI(cookie_pairs.map(function (pair) {
@@ -89,7 +110,7 @@ function format_headers(headers) {
         } else {
             return ("    " + ANSI(val, "white") + ": " + ANSI(headers[val], "grey"));
         }
-    }).join("\n");
+    }).join("\n"));
 }
 
 function format_size(size) {
@@ -128,14 +149,20 @@ function usage_die(message) {
     util.error("    -b <buffer>              size in MB to buffer between libpcap and app (def: 10)");
     util.error("");
     util.error("HTTP filtering:");
-    util.error("    Filters are OR-ed together and may be specified more than once.");
-    util.error("    --method <regex>         filter on method");
-    util.error("    --host <regex>           filter on Host request header");
-    util.error("    --url <regex>            filter on URL");
-    util.error("    --user-agent <regex>     filter on User-Agent request header");
+    util.error("    Filters are RegExps that are OR-ed together and may be specified more than once.");
+    util.error("    Show filters are applied first, then ignore filters.");
+    util.error("    --method <regex>            show requests with this method");
+    util.error("    --method-ignore <regex>     ignore requests with this method");
+    util.error("    --host <regex>              show requests with this Host header");
+    util.error("    --host-ignore <regex>       ignore requests with this Host header");
+    util.error("    --url <regex>               show requests with this URL");
+    util.error("    --url-ignore <regex>        ignore requests with this URL");
+    util.error("    --user-agent <regex>        show requests with this UA header");
+    util.error("    --user-agent-ignore <regex> ignore requests with this UA header");
     util.error("");
     util.error("HTTP output:");
-    util.error("    --headers                print headers of request and response (def: off)");
+    util.error("    --headers                print all headers of request and response (def: off)");
+    util.error("    --show-header            print only headers that match regex (def: off)");
     util.error("    --bodies                 print request and response bodies, if any (def: off)");
 //    util.error("    --group                  group all output for req/res (def: progressive)");
     util.error("    --tcp-verbose            display TCP events (def: off)");
@@ -151,7 +178,6 @@ function usage_die(message) {
     process.exit(1);
 }
 
-// Someone else's options parsing library would parse options better, but I fear extra dependencies
 function parse_options() {
     var argv_slice = process.argv.slice(2), 
         optnum = 0, opt, optname, optval,
@@ -163,10 +189,15 @@ function parse_options() {
         "f": { multiple: false, has_value: true },
         "b": { multiple: false, has_value: true },
         "method": { multiple: true, has_value: true, regex: true },
+        "method-ignore": { multiple: true, has_value: true, regex: true },
         "host": { multiple: true, has_value: true, regex: true },
+        "host-ignore": { multiple: true, has_value: true, regex: true },
         "url": { multiple: true, has_value: true, regex: true },
+        "url-ignore": { multiple: true, has_value: true, regex: true },
         "user-agent": { multiple: true, has_value: true, regex: true },
+        "user-agent-ignore": { multiple: true, has_value: true, regex: true },
         "headers": { multiple: false, has_value: false },
+        "show-header": { multiple: true, has_value: true, regex: true },
         "bodies": { multiple: false, has_value: false },
 //        "group": { multiple: false, has_value: false },
         "tcp-verbose": { multiple: false, has_value: false },
@@ -231,15 +262,31 @@ function parse_options() {
 }
 
 function filter_match(http) {
-    var filters = [
-        [http.request.method, options.method],
-        [http.request.url, options.url],
-        [http.request.headers.Host, options.host],
-        [http.request.headers["User-Agent"], options["user-agent"]],
-    ], filter_pair_num, filter_index;
+    var show_filters = [], hide_filters = [], show = true;
 
-    if (options.method || options.host || options.url || options["user-agent"]) {
-        return filters.some(function (filter_pair) {
+    options.method && show_filters.push([http.request.method, options.method]);
+    options.url && show_filters.push([http.request.url, options.url]);
+    options.host && show_filters.push([http.request.headers.Host, options.host]);
+    options["user-agent"] && show_filters.push([http.request.headers["User-Agent"], options["user-agent"]]);
+
+    options["method-ignore"] && hide_filters.push([http.request.method, options["method-ignore"]]);
+    options["url-ignore"] && hide_filters.push([http.request.url, options["url-ignore"]]);
+    options["host-ignore"] && hide_filters.push([http.request.headers.Host, options["host-ignore"]]);
+    options["user-agent-ignore"] && hide_filters.push([http.request.headers["User-Agent"], options["user-agent-ignore"]]);
+
+    if (show_filters.length > 0) {
+        show = show_filters.some(function (filter_pair) {
+            if (Array.isArray(filter_pair[1])) {
+                return filter_pair[1].some(function (filter) {
+                    return filter.test(filter_pair[0]);
+                });
+            }
+            return false;
+        });
+    }  // if no show filters, then everything "matches"
+    
+    if (hide_filters.length > 0) {
+        show = !hide_filters.some(function (filter_pair) {
             if (typeof filter_pair[1] === 'object') {
                 return filter_pair[1].some(function (filter) {
                     return filter.test(filter_pair[0]);
@@ -247,8 +294,15 @@ function filter_match(http) {
             }
             return false;
         });
-    } else {
-        return true; // if no filters, then everything "matches"
+    }
+    
+    return show;
+}
+
+function privs_check() {
+    if (process.getuid() !== 0) {
+        console.log(ANSI(ANSI("Warning: not running with root privs, which are usually required for raw packet capture.", "red"), "bold"));
+        console.log(ANSI("Trying to open anyway...", "red"));
     }
 }
 
@@ -258,18 +312,21 @@ function start_capture_session() {
         options.f = "ip proto \\tcp";
     }
     pcap_session = pcap.createSession(options.i, options.f, (options.b * 1024 * 1024));
-
     console.log("Listening on " + pcap_session.device_name);
 }
 
 function start_drop_watcher() {
     // Check for pcap dropped packets on an interval
-    setInterval(function () {
+    var first_drop = setInterval(function () {
         var stats = pcap_session.stats();
         if (stats.ps_drop > 0) {
             console.log(ANSI("pcap dropped packets, need larger buffer or less work to do: " + util.inspect(stats), "bold"));
+            clearInterval(first_drop);
+            setInterval(function () {
+                console.log(ANSI("pcap dropped packets: " + util.inspect(stats), "bold"));
+            }, 5000);
         }
-    }, 2000);
+    }, 1000);
 }
 
 function setup_listeners() {
@@ -338,9 +395,7 @@ function setup_listeners() {
             " #" + session.http_request_count + " HTTP " + http.request.http_version + " request: " + 
             ANSI(ANSI(http.request.method, "bold") + " " + http.request.url, "yellow"));
 
-        if (options.headers) {
-            console.log(format_headers(http.request.headers));
-        }
+        format_headers(http.request.headers);
     });
 
     tcp_tracker.on('http request body', function (session, http, data) {
@@ -379,9 +434,7 @@ function setup_listeners() {
             " #" + session.http_request_count + " HTTP " + http.response.http_version + " response: " +
             ANSI(http.response.status_code + " " + node_http.STATUS_CODES[http.response.status_code], "yellow"));
 
-        if (options.headers) {
-            console.log(format_headers(http.response.headers));
-        }
+        format_headers(http.response.headers);
     });
 
     tcp_tracker.on('http response body', function (session, http, data) {
@@ -414,7 +467,7 @@ function setup_listeners() {
         
         console.log(format_line_start(session.current_cap_time, session.dst_name, session.src_name) +
             " WebSocket upgrade " + ANSI(http.response.status_code + " " + node_http.STATUS_CODES[http.response.status_code], "yellow"));
-        console.log(format_headers(http.response.headers));
+        format_headers(http.response.headers);
     });
 
     tcp_tracker.on('websocket message', function (session, dir, message) {
@@ -441,6 +494,7 @@ parse_options();
 if (options.help) {
     usage_die();
 }
+privs_check();
 start_capture_session();
 start_drop_watcher();
 setup_listeners();

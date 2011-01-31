@@ -1,5 +1,5 @@
 {   "name" : "http_trace",
-    "version" : "0.2.4",
+    "version" : "0.3.0",
     "description" : "Live HTTP and WebSocket packet capture and protocol decoding",
     "author": "Matt Ranney <mjr@ranney.com>",
     "main": "./http_trace",
