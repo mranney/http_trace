@@ -13,10 +13,15 @@ This is a handy program that decodes HTTP and WebSocket traffic.  It uses `node_
 
     HTTP filtering:
         Filters are OR-ed together and may be specified more than once.
-        --method <regex>         filter on method
-        --host <regex>           filter on Host request header
-        --url <regex>            filter on URL
-        --user-agent <regex>     filter on User-Agent request header
+        Show filters are applied first, then ignore filters.
+        --method <regex>            show requests with this method
+        --method-ignore <regex>     ignore requests with this method
+        --host <regex>              show requests with this Host header
+        --host-ignore <regex>       ignore requests with this Host header
+        --url <regex>               show requests with this URL
+        --url-ignore <regex>        ignore requests with this URL
+        --user-agent <regex>        show requests with this UA header
+        --user-agent-ignore <regex> ignore requests with this UA header
 
     HTTP output:
         --headers                print headers of request and response (def: off)
