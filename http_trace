@@ -11,7 +11,7 @@ var util;
 try {
     util = require("util");
 } catch (err) {
-    util = require("sys");
+    util = require('util');
 }
 
 var node_http = require('http'),
