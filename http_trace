@@ -400,6 +400,8 @@ function setup_listeners() {
             return;
         }
 
+        http.request.start = Date.now();
+
         console.log(format_line_start(session.current_cap_time, session.src_name, session.dst_name) +
             " #" + session.http_request_count + " HTTP " + http.request.http_version + " request: " + 
             ANSI(ANSI(http.request.method, "bold") + " " + http.request.url, "yellow"));
@@ -470,7 +472,7 @@ function setup_listeners() {
 
         console.log(format_line_start(session.current_cap_time, session.dst_name, session.src_name) +
             " #" + session.http_request_count + " HTTP " + http.response.http_version + " response complete " + 
-            format_size(http.response.body_len));
+            format_size(http.response.body_len) + " " + (Date.now() - http.request.start) + "ms");
     });
 
     tcp_tracker.on('websocket upgrade', function (session, http) {
