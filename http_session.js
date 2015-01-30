@@ -32,7 +32,7 @@ function HTTPSession(tcp_session) {
     this.request = new HTTPRequest();
     this.response = new HTTPResponse();
     this.request_parser = new HTTPParser(HTTPParser.REQUEST);
-    this.response_parser = new HTTPParser(HTTPParser.RESPONSE)
+    this.response_parser = new HTTPParser(HTTPParser.RESPONSE);
     this.request_count = 0;
 
     this.tcp_session.src_name = lookup(this.tcp_session.src_name);
@@ -55,8 +55,8 @@ function HTTPSession(tcp_session) {
     this.request_parser.onMessageComplete = function () {
         self.emit("http request complete", self);
     };
-    this.response_parser.onHeaders = function (headers, url) {
-        self.on_res_headers(headers, url);
+    this.response_parser.onHeaders = function (headers) {
+        self.on_res_headers(headers);
     };
     this.response_parser.onHeadersComplete = function(info) {
         self.on_res_headers_complete(info);
@@ -104,8 +104,8 @@ HTTPSession.prototype.on_req_body = function (buf, start, len) {
     this.emit("http request body", this, buf.slice(start, start + len));
 };
 
-HTTPSession.prototype.on_res_headers = function (headers, url) {
-    self.response_parser.headers = (this.response_parser.headers || []).concat(headers);
+HTTPSession.prototype.on_res_headers = function (headers) {
+    this.response_parser.headers = (this.response_parser.headers || []).concat(headers);
 };
 
 HTTPSession.prototype.on_res_headers_complete = function (info) {

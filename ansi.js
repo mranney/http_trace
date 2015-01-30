@@ -22,7 +22,7 @@ var formats = {
     grey: [90, 39]
 };
 
-var CSI = String.fromCharCode(27) + '[';
+var CSI = String.fromCharCode(27) + "[";
 
 Object.keys(formats).forEach(function (format) {
     exports[format] = function fmt(str) {

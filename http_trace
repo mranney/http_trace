@@ -8,7 +8,6 @@
 var inspect = require("util").inspect;
 var HTTPSession = require("./http_session");
 var node_http = require("http");
-var node_url = require("url");
 var pcap = require("pcap");
 var pcap_session, ANSI, options = {};
 var ANSI = require("./ansi");
@@ -66,7 +65,7 @@ function format_headers(headers) {
         if (val === "Cookie") {
             var cookie_pairs = headers[val].split("; ").sort();
             return ("    " + ANSI.white(val) + ": " + ANSI.grey(cookie_pairs.map(function (pair) {
-                var parts = pair.split('=');
+                var parts = pair.split("=");
                 return parts[0] + ": " + parts[1];
             }).join("\n            ")));
         } else {
@@ -85,16 +84,22 @@ function format_size(size) {
     }
 }
 
-function format_obj(obj) {
+function format_json(str) {
+    var obj;
+    try {
+        obj = JSON.parse(str);
+    } catch (err) {
+        return str;
+    }
     var keys = Object.keys(obj).sort();
 
     return keys.map(function (key) {
-        if (typeof obj[key] === 'object') {
+        if (typeof obj[key] === "object") {
             return "    " + ANSI.white(key) + inspect(obj[key]);
         } else {
             return "    " + ANSI.white(key) + ": " + ANSI.grey(obj[key]);
         }
-    }).join('\n');
+    }).join("\n");
 }
 
 function usage_die(message) {
@@ -131,18 +136,18 @@ function usage_die(message) {
     console.error("    --no-color               disable ANSI colors (def: pretty colors on)");
     console.error("");
     console.error("Examples:");
-    console.error('    http_trace -f "tcp port 80"');
-    console.error('       listen for TCP port 80 on the default device');
-    console.error('    http_trace -i eth1 --method POST');
-    console.error('       listen on eth1 for all traffic that has an HTTP POST');
-    console.error('    http_trace --host ranney --headers');
-    console.error('       matches ranney in Host header and prints req/res headers');
+    console.error("    http_trace -f \"tcp port 80\"");
+    console.error("       listen for TCP port 80 on the default device");
+    console.error("    http_trace -i eth1 --method POST");
+    console.error("       listen on eth1 for all traffic that has an HTTP POST");
+    console.error("    http_trace --host ranney --headers");
+    console.error("       matches ranney in Host header and prints req/res headers");
     process.exit(1);
 }
 
 function parse_options() {
     var argv_slice = process.argv.slice(2), 
-        optnum = 0, opt, optname, optval,
+        optnum = 0, opt, optname,
         state = "match optname", matches,
         valid_options;
 
@@ -206,7 +211,7 @@ function parse_options() {
                 usage_die("bad option name: " + opt);
             }
         } else if (state === "match optval") {
-            if (opt[0] !== '-') {
+            if (opt[0] !== "-") {
                 set_option(optname, opt);
                 state = "match optname";
             } else {
@@ -250,7 +255,7 @@ function filter_match(http) {
     
     if (hide_filters.length > 0) {
         show = !hide_filters.some(function (filter_pair) {
-            if (typeof filter_pair[1] === 'object') {
+            if (typeof filter_pair[1] === "object") {
                 return filter_pair[1].some(function (filter) {
                     return filter.test(filter_pair[0]);
                 });
@@ -382,9 +387,13 @@ function on_tcp_session(tcp_session) {
             " #" + session.request_count + " HTTP " + session.request.http_version + " request body: " + 
             format_size(data.length));
 
+        // TODO - need real binary_body check, more than just content-type
         if (options.bodies && !session.request.binary_body) {
-            // TODO - need real binary_body check, more than just content-type
-            console.log(ANSI.green(data.toString("utf8")));
+            if (session.request.headers["content-type"].match(/json/)) {
+                console.log(ANSI.green(data.toString("utf8")));
+            } else {
+                console.log(format_json(data.toString("utf8")));
+            }
         }
     });
 
