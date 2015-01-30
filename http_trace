@@ -1,59 +1,18 @@
 #!/usr/bin/env node
 
-/*global process require exports setInterval console */
-
 // TODO:
 //    support -n for inhibiting reverse DNS
 //    support --group for grouping events from a full req/res cycle
 //
 
-var util;
-try {
-    util = require("util");
-} catch (err) {
-    util = require("sys");
-}
-
-var node_http = require('http'),
-    node_url  = require('url'),
-    pcap      = require("pcap"), pcap_session,
-    ANSI,
-    options   = {};
-    
-ANSI = (function () {
-    // http://en.wikipedia.org/wiki/ANSI_escape_code
-    var formats = {
-        bold: [1, 22], // bright
-        light: [2, 22], // faint
-        italic: [3, 23],
-        underline: [4, 24], // underline single
-        blink_slow: [5, 25],
-        blink_fast: [6, 25],
-        inverse: [7, 27],
-        conceal: [8, 28],
-        strikethrough: [9, 29], // crossed-out
-        // 10 - 20 are font control
-        underline_double: [21, 24],
-        black: [30, 39],
-        red: [31, 39],
-        green: [32, 39],
-        yellow: [33, 39],
-        blue: [34, 39],
-        magenta: [35, 39],
-        cyan: [36, 39],
-        white: [37, 39],
-        grey: [90, 39]
-    },
-    CSI = String.fromCharCode(27) + '[';
-
-    return function (str, format) {
-        if (options["no-color"]) {
-            return str;
-        }
-        return CSI + formats[format][0] + 'm' + str + CSI + formats[format][1] + 'm';
-    };
-}());
-
+var inspect = require("util").inspect;
+var HTTPSession = require("./http_session");
+var node_http = require("http");
+var node_url = require("url");
+var pcap = require("pcap");
+var pcap_session, ANSI, options = {};
+var ANSI = require("./ansi");
+   
 function lpad(num, len) {
     var str = num.toString();
 
@@ -66,21 +25,24 @@ function lpad(num, len) {
 function format_timestamp(timems) {
     var date_obj = new Date(timems);
 
-    return ANSI(lpad(date_obj.getHours(), 2) + ":" + lpad(date_obj.getMinutes(), 2) + ":" + lpad(date_obj.getSeconds(), 2) + "." +
-        lpad(date_obj.getMilliseconds(), 3), "blue");
+    return ANSI.blue(lpad(date_obj.getHours(), 2) + ":" + lpad(date_obj.getMinutes(), 2) + ":" + lpad(date_obj.getSeconds(), 2) + "." +
+        lpad(date_obj.getMilliseconds(), 3));
 }
 
 function format_hostname(hostname) {
     if (/[a-zA-Z]/.test(hostname)) {
         var parts = hostname.split(":");
-        return ANSI(parts[0].split('.')[0] + ":" + parts[1], "magenta");
+        return ANSI.magenta(parts[0].slice(0, 20) + ":" + parts[1]);
     } else {
-        return ANSI(hostname, "magenta");
+        return ANSI.magenta(hostname);
     }
 }
 
-function format_line_start(ts, src, dst) {
-    return format_timestamp(ts) + " " + format_hostname(src) + " -> " + format_hostname(dst);
+function format_line_start(session, send) {
+    if (send) {
+        return format_timestamp(session.current_cap_time) + " " + format_hostname(session.src_name) + " -> " + format_hostname(session.dst_name);
+    }
+    return format_timestamp(session.current_cap_time) + " " + format_hostname(session.dst_name) + " -> " + format_hostname(session.src_name);
 }
 
 function format_headers(headers) {
@@ -103,12 +65,12 @@ function format_headers(headers) {
     console.log(matched.map(function (val) {
         if (val === "Cookie") {
             var cookie_pairs = headers[val].split("; ").sort();
-            return ("    " + ANSI(val, "white") + ": " + ANSI(cookie_pairs.map(function (pair) {
+            return ("    " + ANSI.white(val) + ": " + ANSI.grey(cookie_pairs.map(function (pair) {
                 var parts = pair.split('=');
                 return parts[0] + ": " + parts[1];
-            }).join("\n            "), "grey"));
+            }).join("\n            ")));
         } else {
-            return ("    " + ANSI(val, "white") + ": " + ANSI(headers[val], "grey"));
+            return ("    " + ANSI.white(val) + ": " + ANSI.grey(headers[val]));
         }
     }).join("\n"));
 }
@@ -128,53 +90,53 @@ function format_obj(obj) {
 
     return keys.map(function (key) {
         if (typeof obj[key] === 'object') {
-            return "    " + ANSI(key, "white") + util.inspect(obj[key]);
+            return "    " + ANSI.white(key) + inspect(obj[key]);
         } else {
-            return "    " + ANSI(key, "white") + ": " + ANSI(obj[key], "grey");
+            return "    " + ANSI.white(key) + ": " + ANSI.grey(obj[key]);
         }
     }).join('\n');
 }
 
 function usage_die(message) {
     if (message) {
-        util.error("");
-        util.error(message);
+        console.error("");
+        console.error(message);
     }
-    util.error("");
-    util.error("usage: http_trace [options]");
-    util.error("");
-    util.error("Capture options:");
-    util.error("    -i <interface>           interface name for capture (def: first with an addr)");
-    util.error("    -f <pcap_filter>         packet filter in pcap-filter(7) syntax (def: all TCP packets)");
-    util.error("    -b <buffer>              size in MB to buffer between libpcap and app (def: 10)");
-    util.error("");
-    util.error("HTTP filtering:");
-    util.error("    Filters are RegExps that are OR-ed together and may be specified more than once.");
-    util.error("    Show filters are applied first, then ignore filters.");
-    util.error("    --method <regex>            show requests with this method");
-    util.error("    --method-ignore <regex>     ignore requests with this method");
-    util.error("    --host <regex>              show requests with this Host header");
-    util.error("    --host-ignore <regex>       ignore requests with this Host header");
-    util.error("    --url <regex>               show requests with this URL");
-    util.error("    --url-ignore <regex>        ignore requests with this URL");
-    util.error("    --user-agent <regex>        show requests with this UA header");
-    util.error("    --user-agent-ignore <regex> ignore requests with this UA header");
-    util.error("");
-    util.error("HTTP output:");
-    util.error("    --headers                print all headers of request and response (def: off)");
-    util.error("    --show-header            print only headers that match regex (def: off)");
-    util.error("    --bodies                 print request and response bodies, if any (def: off)");
-//    util.error("    --group                  group all output for req/res (def: progressive)");
-    util.error("    --tcp-verbose            display TCP events (def: off)");
-    util.error("    --no-color               disable ANSI colors (def: pretty colors on)");
-    util.error("");
-    util.error("Examples:");
-    util.error('    http_trace -f "tcp port 80"');
-    util.error('       listen for TCP port 80 on the default device');
-    util.error('    http_trace -i eth1 --method POST');
-    util.error('       listen on eth1 for all traffic that has an HTTP POST');
-    util.error('    http_trace --host ranney --headers');
-    util.error('       matches ranney in Host header and prints req/res headers');
+    console.error("");
+    console.error("usage: http_trace [options]");
+    console.error("");
+    console.error("Capture options:");
+    console.error("    -i <interface>           interface name for capture (def: first with an addr)");
+    console.error("    -f <pcap_filter>         packet filter in pcap-filter(7) syntax (def: all TCP packets)");
+    console.error("    -b <buffer>              size in MB to buffer between libpcap and app (def: 10)");
+    console.error("");
+    console.error("HTTP filtering:");
+    console.error("    Filters are RegExps that are OR-ed together and may be specified more than once.");
+    console.error("    Show filters are applied first, then ignore filters.");
+    console.error("    --method <regex>            show requests with this method");
+    console.error("    --method-ignore <regex>     ignore requests with this method");
+    console.error("    --host <regex>              show requests with this Host header");
+    console.error("    --host-ignore <regex>       ignore requests with this Host header");
+    console.error("    --url <regex>               show requests with this URL");
+    console.error("    --url-ignore <regex>        ignore requests with this URL");
+    console.error("    --user-agent <regex>        show requests with this UA header");
+    console.error("    --user-agent-ignore <regex> ignore requests with this UA header");
+    console.error("");
+    console.error("HTTP output:");
+    console.error("    --headers                print all headers of request and response (def: off)");
+    console.error("    --show-header            print only headers that match regex (def: off)");
+    console.error("    --bodies                 print request and response bodies, if any (def: off)");
+//    console.error("    --group                  group all output for req/res (def: progressive)");
+    console.error("    --tcp-verbose            display TCP events (def: off)");
+    console.error("    --no-color               disable ANSI colors (def: pretty colors on)");
+    console.error("");
+    console.error("Examples:");
+    console.error('    http_trace -f "tcp port 80"');
+    console.error('       listen for TCP port 80 on the default device');
+    console.error('    http_trace -i eth1 --method POST');
+    console.error('       listen on eth1 for all traffic that has an HTTP POST');
+    console.error('    http_trace --host ranney --headers');
+    console.error('       matches ranney in Host header and prints req/res headers');
     process.exit(1);
 }
 
@@ -261,6 +223,7 @@ function parse_options() {
     }
 }
 
+// TODO - make this way faster
 function filter_match(http) {
     var show_filters = [], hide_filters = [], show = true;
 
@@ -301,8 +264,8 @@ function filter_match(http) {
 
 function privs_check() {
     if (process.getuid() !== 0) {
-        console.log(ANSI(ANSI("Warning: not running with root privs, which are usually required for raw packet capture.", "red"), "bold"));
-        console.log(ANSI("Trying to open anyway...", "red"));
+        console.log(ANSI.bold(ANSI.red("Warning: not running with root privs, which are usually required for raw packet capture.")));
+        console.log(ANSI.red("Trying to open anyway..."));
     }
 }
 
@@ -320,14 +283,15 @@ function start_drop_watcher() {
     var first_drop = setInterval(function () {
         var stats = pcap_session.stats();
         if (stats.ps_drop > 0) {
-            console.log(ANSI("pcap dropped packets, need larger buffer or less work to do: " + util.inspect(stats), "bold"));
+            console.log(ANSI.bold("pcap dropped packets, need larger buffer or less work to do: " + JSON.stringify(stats)));
             clearInterval(first_drop);
             setInterval(function () {
-                console.log(ANSI("pcap dropped packets: " + util.inspect(stats), "bold"));
+                console.log(ANSI.bold("pcap dropped packets: " + JSON.stringify(stats)));
             }, 5000);
         }
     }, 1000);
 }
+
 
 function binary_body_check(headers) {
     var ct = headers["Content-Type"];
@@ -339,171 +303,147 @@ function binary_body_check(headers) {
 }
 
 function setup_listeners() {
-    var tcp_tracker = new pcap.TCP_tracker();
+    var tcp_tracker = new pcap.TCPTracker();
 
-    // listen for packets, decode them, and feed TCP to the tracker
-    pcap_session.on('packet', function (raw_packet) {
+    pcap_session.on("packet", function (raw_packet) {
         var packet = pcap.decode.packet(raw_packet);
-
         tcp_tracker.track_packet(packet);
     });
 
+    // tracker emits sessions, and sessions emit data
+    tcp_tracker.on("session", function (tcp_session) {
+        on_tcp_session(tcp_session);
+    });
+
     if (options["tcp-verbose"]) {
-        tcp_tracker.on("start", function (session) {
-            console.log(format_line_start(session.current_cap_time, session.src_name, session.dst_name) +
-                " TCP start ");
+        tcp_tracker.on("session", function (session) {
+            if (session.missed_syn) {
+                console.log(format_line_start(session, true) + " TCP already in progress ");
+            } else {
+                console.log(format_line_start(session, true) + " TCP start ");
+            }
         });
         tcp_tracker.on("retransmit", function (session, direction, seqno) {
             var line_start;
             if (direction === "send") {
-                line_start = format_line_start(session.current_cap_time, session.src_name, session.dst_name);
+                line_start = format_line_start(session, true);
             } else {
-                line_start = format_line_start(session.current_cap_time, session.dst_name, session.src_name);
+                line_start = format_line_start(session, false);
             }
             console.log(line_start + "TCP retransmit at " + seqno);
         });
         tcp_tracker.on("end", function (session) {
-            console.log(format_line_start(session.current_cap_time, session.src_name, session.dst_name) +
-                " TCP end ");
+            console.log(format_line_start(session, true) + " TCP end ");
         });
         tcp_tracker.on("reset", function (session) {
             // eventually this event will have a direction.  Right now, it's only from dst.
-            console.log(format_line_start(session.current_cap_time, session.dst_name, session.src_name) +
-                " TCP reset ");
+            console.log(format_line_start(session, false) + " TCP reset ");
         });
         tcp_tracker.on("syn retry", function (session) {
-            console.log(format_line_start(session.current_cap_time, session.src_name, session.dst_name) +
-                " SYN retry");
+            console.log(format_line_start(session, true) + " SYN retry");
         });
     }
+}
 
-    tcp_tracker.on('http error', function (session, direction, error) {
+function on_tcp_session(tcp_session) {
+    var http_session = new HTTPSession(tcp_session);
+
+    http_session.on("http error", function (session, direction, error) {
+        console.log("http error ", error.stack);
         var line_start;
         if (direction === "send") {
-            line_start = format_line_start(session.current_cap_time, session.src_name, session.dst_name);
+            line_start = format_line_start(tcp_session, true);
         } else {
-            line_start = format_line_start(session.current_cap_time, session.dst_name, session.src_name);
+            line_start = format_line_start(tcp_session, false);
         }
 
         console.log(line_start + " HTTP parser error: " + error);
-        // TODO - probably need to force this request/response to be over at this point
     });
 
-    tcp_tracker.on('http request', function (session, http) {
-        if (session.http_request_count) {
-            session.http_request_count += 1;
-        } else {
-            session.http_request_count = 1;
-        }
-
-        if (! filter_match(http)) {
+    http_session.on("http request", function (session) {
+        if (! filter_match(session)) {
             return;
         }
 
-        http.request.start = Date.now();
+        var req = session.request;
+        console.log(format_line_start(tcp_session, true) + " #" + session.request_count + " HTTP " + req.http_version + " request: " + 
+            ANSI.yellow(ANSI.bold(req.method) + " " + req.url));
 
-        console.log(format_line_start(session.current_cap_time, session.src_name, session.dst_name) +
-            " #" + session.http_request_count + " HTTP " + http.request.http_version + " request: " + 
-            ANSI(ANSI(http.request.method, "bold") + " " + http.request.url, "yellow"));
-
-        format_headers(http.request.headers);
-        http.request.binary_body = binary_body_check(http.request.headers);
+        format_headers(req.headers);
+        req.binary_body = binary_body_check(req.headers);
     });
 
-    tcp_tracker.on('http request body', function (session, http, data) {
-        if (! filter_match(http)) {
+    http_session.on("http request body", function (session, data) {
+        if (! filter_match(session)) {
             return;
         }
 
-        console.log(format_line_start(session.current_cap_time, session.src_name, session.dst_name) +
-            " #" + session.http_request_count + " HTTP " + http.request.http_version + " request body: " + 
+        console.log(format_line_start(tcp_session, true) +
+            " #" + session.request_count + " HTTP " + session.request.http_version + " request body: " + 
             format_size(data.length));
 
-        if (options.bodies && !http.request.binary_body) {
-            // TODO - this is not at all what you want for gzipped data
-            console.log(ANSI(data.toString("utf8"), "green"));
+        if (options.bodies && !session.request.binary_body) {
+            // TODO - need real binary_body check, more than just content-type
+            console.log(ANSI.green(data.toString("utf8")));
         }
     });
 
-    tcp_tracker.on('http request complete', function (session, http) {
-        if (! filter_match(http)) {
+    http_session.on("http request complete", function (session) {
+        if (! filter_match(session)) {
             return;
         }
 
-        if (http.request.body_len > 0 || http.request.method !== "GET") {
-            console.log(format_line_start(session.current_cap_time, session.src_name, session.dst_name) +
-                " #" + session.http_request_count + " HTTP " + http.request.http_version + " request complete " +
-                format_size(http.request.body_len));
+        if (session.request.body_len > 0 || session.request.method !== "GET") {
+            console.log(format_line_start(tcp_session, true) + 
+                " #" + session.request_count + " HTTP " + session.request.http_version + " request complete " +
+                format_size(session.request.body_len));
         }
     });
 
-    tcp_tracker.on('http response', function (session, http) {
-        if (! filter_match(http)) {
+    http_session.on("http response", function (session) {
+        if (! filter_match(session)) {
             return;
         }
 
-        console.log(format_line_start(session.current_cap_time, session.dst_name, session.src_name) +
-            " #" + session.http_request_count + " HTTP " + http.response.http_version + " response: " +
-            ANSI(http.response.status_code + " " + node_http.STATUS_CODES[http.response.status_code], "yellow"));
+        var res = session.response;
+        console.log(format_line_start(tcp_session, false) + " #" + session.request_count + " HTTP " + res.http_version + " response: " +
+            ANSI.yellow(res.status_code + " " + node_http.STATUS_CODES[res.status_code]));
 
-        format_headers(http.response.headers);
-        http.response.binary_body = binary_body_check(http.response.headers);
+        format_headers(res.headers);
+        res.binary_body = binary_body_check(res.headers);
     });
 
-    tcp_tracker.on('http response body', function (session, http, data) {
-        if (! filter_match(http)) {
+    http_session.on("http response body", function (session, data) {
+        if (! filter_match(session)) {
             return;
         }
 
-        console.log(format_line_start(session.current_cap_time, session.dst_name, session.src_name) +
-            " #" + session.http_request_count + " HTTP " + http.response.http_version + " response body: " + 
+        console.log(format_line_start(tcp_session, false) +
+            " #" + session.request_count + " HTTP " + session.response.http_version + " response body: " + 
             format_size(data.length));
 
-        if (options.bodies && !http.response.binary_body) {
+        if (options.bodies && !session.response.binary_body) {
             // TODO - this is not at all what you want for gzipped or binary data
-            console.log(ANSI(data.toString("utf8"), "green"));
+            console.log(ANSI.green(data.toString("utf8")));
         }
     });
 
-    tcp_tracker.on('http response complete', function (session, http) {
-        if (! filter_match(http)) {
+    http_session.on("http response complete", function (session) {
+        if (! filter_match(session)) {
             return;
         }
 
-        console.log(format_line_start(session.current_cap_time, session.dst_name, session.src_name) +
-            " #" + session.http_request_count + " HTTP " + http.response.http_version + " response complete " + 
-            format_size(http.response.body_len) + " " + (Date.now() - http.request.start) + "ms");
-    });
-
-    tcp_tracker.on('websocket upgrade', function (session, http) {
-        // TODO - figure out how filters apply to WS
-        
-        console.log(format_line_start(session.current_cap_time, session.dst_name, session.src_name) +
-            " WebSocket upgrade " + ANSI(http.response.status_code + " " + node_http.STATUS_CODES[http.response.status_code], "yellow"));
-        format_headers(http.response.headers);
-    });
-
-    tcp_tracker.on('websocket message', function (session, dir, message) {
-        // TODO - figure out how filters apply to WS
-
-        var line_start, obj;
-        if (dir === "send") {
-            line_start = format_line_start(session.current_cap_time, session.src_name, session.dst_name);
-        } else {
-            line_start = format_line_start(session.current_cap_time, session.dst_name, session.src_name);
-        }
-        console.log(line_start + " WebSocket message " + format_size(message.length));
-        try {
-            obj = JSON.parse(message);
-            console.log("JSON: " + ANSI(util.inspect(obj), "green"));
-        } catch (err) {
-            console.log(ANSI(message, "green"));
-        }
+        console.log(format_line_start(tcp_session, false) +
+            " #" + session.request_count + " HTTP " + session.response.http_version + " response complete " + 
+            format_size(session.response.body_len) + " " + (Date.now() - session.request.start) + "ms");
     });
 }
 
 // Make it all go
 parse_options();
+if (options["no-color"]) {
+    ANSI.no_color = true;
+}
 if (options.help) {
     usage_die();
 }
