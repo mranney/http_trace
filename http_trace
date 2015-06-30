@@ -389,7 +389,8 @@ function on_tcp_session(tcp_session) {
 
         // TODO - need real binary_body check, more than just content-type
         if (options.bodies && !session.request.binary_body) {
-            if (session.request.headers["content-type"].match(/json/)) {
+            if (session.request.headers["content-type"] &&
+                session.request.headers["content-type"].match(/json/)) {
                 console.log(ANSI.green(data.toString("utf8")));
             } else {
                 console.log(format_json(data.toString("utf8")));
