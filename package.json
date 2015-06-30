@@ -1,16 +1,17 @@
-{   "name" : "http_trace",
-    "version" : "0.5.0",
-    "description" : "Live HTTP packet capture and protocol decoding",
-    "author": "Matt Ranney <mjr@ranney.com>",
-    "main": "./http_trace",
-    "repository": {
-        "type": "git",
-        "url": "git://github.com/mranney/http_trace.git"
-    },
-    "dependencies": {
-        "pcap": ">=2.0.0"
-    },
-    "bin": {
-        "http_trace": "./http_trace"
-    }
+{
+  "name": "http_trace",
+  "version": "0.5.1",
+  "description": "Live HTTP packet capture and protocol decoding",
+  "author": "Matt Ranney <mjr@ranney.com>",
+  "main": "./http_trace",
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/mranney/http_trace.git"
+  },
+  "dependencies": {
+    "pcap": ">=2.0.0"
+  },
+  "bin": {
+    "http_trace": "./http_trace"
+  }
 }
